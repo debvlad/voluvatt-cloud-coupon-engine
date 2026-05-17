@@ -1,0 +1,22 @@
+project_id = "voluvatt-cloud-coupon-engine"
+
+[functions.create-coupon]
+verify_jwt = false
+
+[functions.create-batch-coupons]
+verify_jwt = false
+
+[functions.validate-coupon]
+verify_jwt = false
+
+[functions.redeem-coupon]
+verify_jwt = false
+
+[functions.cancel-coupon]
+verify_jwt = false
+
+[functions.create-staff-user]
+verify_jwt = false
+
+[functions.deactivate-staff-user]
+verify_jwt = false
