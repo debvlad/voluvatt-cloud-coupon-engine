@@ -9,7 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icons/icon.svg', 'offline.html'],
       workbox: {
-        navigateFallback: '/offline.html',
+        navigateFallback: '/index.html',
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
         runtimeCaching: [
           {
