@@ -76,7 +76,7 @@ serve(async (req) => {
       customerLabel: row?.customer_label || null,
       issuedReason: row?.issued_reason || null,
       instructions: 'Show this QR code at the Võluvatt stand.',
-      message: row?.message || statusMessage(safeStatus)
+      message: row?.result === 'cancelled' ? 'Coupon was disabled.' : (row?.message || statusMessage(safeStatus))
     });
   } catch (error) {
     if (error instanceof HttpError) return fail(error.message, error.status);

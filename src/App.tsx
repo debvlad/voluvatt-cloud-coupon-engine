@@ -6,6 +6,7 @@ import { AdminPage } from './pages/AdminPage';
 import { ScanPage } from './pages/ScanPage';
 import { CustomerCouponPage } from './pages/CustomerCouponPage';
 import { ReportsPage } from './pages/ReportsPage';
+import { AdminCouponDetailPage } from './pages/AdminCouponDetailPage';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
               <Route path="/" element={<Navigate to="/scan" replace />} />
               <Route path="/scan" element={<RequireAuth roles={['owner', 'admin', 'staff']}><ScanPage /></RequireAuth>} />
               <Route path="/admin" element={<RequireAuth roles={['owner', 'admin']}><AdminPage /></RequireAuth>} />
+              <Route path="/admin/coupons/:couponId" element={<RequireAuth roles={['owner', 'admin']}><AdminCouponDetailPage /></RequireAuth>} />
               <Route path="/reports" element={<RequireAuth roles={['owner', 'admin']}><ReportsPage /></RequireAuth>} />
               <Route path="*" element={<Navigate to="/scan" replace />} />
             </Routes>

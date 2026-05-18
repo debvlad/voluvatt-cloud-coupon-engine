@@ -26,12 +26,12 @@ serve(async (req) => {
     if (error) throw error;
     if (!data) {
       const { data: existing } = await service.from('coupons').select('status').eq('id', couponId).maybeSingle();
-      return fail(existing ? `Coupon cannot be cancelled because it is ${existing.status}.` : 'Coupon not found.', 409);
+      return fail(existing ? `Coupon cannot be disabled because it is ${existing.status}.` : 'Coupon not found.', 409);
     }
 
     return json({ success: true, coupon: data });
   } catch (error) {
     if (error instanceof HttpError) return fail(error.message, error.status);
-    return fail(error instanceof Error ? error.message : 'Cancel failed.', 500);
+    return fail(error instanceof Error ? error.message : 'Disable failed.', 500);
   }
 });

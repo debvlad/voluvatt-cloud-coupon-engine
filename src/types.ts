@@ -22,6 +22,7 @@ export type RewardType = {
 export type Coupon = {
   id: string;
   short_code: string;
+  claim_path: string | null;
   reward_type_id: string;
   status: CouponDbStatus;
   issued_reason: string | null;
@@ -53,8 +54,10 @@ export type ValidatedCoupon = {
 };
 
 export type CreatedCoupon = {
+  id: string;
   token: string;
   publicUrl: string;
+  claimPath: string;
   qrData: string;
   shortCode: string;
   rewardName: string;

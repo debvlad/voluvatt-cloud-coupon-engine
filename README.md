@@ -18,7 +18,8 @@ The QR code is not the coupon itself. It is a secret claim link that points to a
 ## Core routes
 
 - `/login` — owner/staff login
-- `/admin` — owner/admin dashboard, coupon creation, batch creation, staff creation, cancellation, coupon list
+- `/admin` — owner/admin dashboard, coupon creation, batch creation, staff creation, disabling, coupon list, selection, pagination, and selected CSV export
+- `/admin/coupons/:couponId` — admin coupon detail page with QR code, public link, and backup code
 - `/scan` — staff scanner and manual code fallback
 - `/c/:token` — public customer coupon page
 - `/reports` — admin-only reports and CSV export
@@ -28,10 +29,11 @@ The QR code is not the coupon itself. It is a secret claim link that points to a
 - The frontend only uses the Supabase anon/publishable key.
 - The Supabase service role key is only used inside Edge Functions.
 - Public coupon URLs contain the raw token.
-- The database stores only `token_hash`, not the raw token.
+- Redemption and validation lookups use `token_hash`.
+- New coupons also save `claim_path` so owner/admin can copy links later; this field is admin-only via RLS. Existing old coupons cannot be reconstructed because the original raw token was not previously saved.
 - Tokens are random, long, and unguessable: example `c_9NfQ7aPz4VxL2mR8sYtK...`.
 - Staff can scan/redeem only.
-- Owner/admin can create/cancel/view coupons and reports.
+- Owner/admin can create/disable/view coupons and reports.
 - Public customers can only validate safe coupon information through `validate-coupon`.
 - Redemption uses a Postgres atomic function: one `UPDATE ... WHERE status='issued' AND expires_at > now() RETURNING ...`.
 - Offline redemption is not supported.
@@ -129,10 +131,10 @@ After this, the owner can log in at `/login` and create staff accounts from `/ad
 From the project root:
 
 ```bash
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
-supabase secrets set SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_OR_PUBLISHABLE_KEY
 supabase secrets set PUBLIC_APP_URL=http://localhost:5173
 ```
+
+Supabase provides reserved default Edge Function secrets such as `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`. Do not manually set secrets that start with `SUPABASE_`.
 
 For production, update `PUBLIC_APP_URL` to your deployed site URL:
 
@@ -254,7 +256,7 @@ supabase secrets set PUBLIC_APP_URL=https://your-site.pages.dev
 - [ ] Coupon becomes redeemed.
 - [ ] Scanning same QR again shows RED already redeemed and displays redeemed date.
 - [ ] Expired coupon shows GRAY expired.
-- [ ] Cancelled coupon shows cancelled.
+- [ ] Disabled coupon shows disabled in the UI.
 - [ ] Staff cannot access admin create functions.
 - [ ] Public user cannot list coupons.
 - [ ] Service role key is never exposed in frontend.
@@ -274,6 +276,7 @@ src/pages/AdminPage.tsx                  Admin dashboard
 src/pages/ScanPage.tsx                   Staff scanner
 src/pages/CustomerCouponPage.tsx         Public customer coupon page
 src/pages/ReportsPage.tsx                Reports + CSV export
+src/pages/AdminCouponDetailPage.tsx      Admin QR/link/detail page
 src/lib/api.ts                           Edge Function caller
 src/lib/supabase.ts                      Supabase browser client
 supabase/migrations/202605170001_initial.sql
@@ -289,3 +292,28 @@ supabase/functions/deactivate-staff-user/index.ts
 ## Operational caution
 
 Do not redeem coupons offline. The PWA caches the shell for convenience, but all validation and redemption calls are network-only. If the scanner has no internet, it will fail safely instead of allowing duplicate redemptions.
+
+## Update notes: coupon list improvements
+
+This version adds:
+
+- A saved `claim_path` for newly created coupons so admin can copy links later.
+- Clickable coupon codes that open `/admin/coupons/:couponId`.
+- A coupon detail page with QR code, public link, and backup code.
+- Coupon list pagination with 10 / 20 / 50 / 100 options.
+- Row checkboxes and select-all for the current page.
+- Selected CSV export using filenames like `voluvatt-coupons-export.2026.05.18.19.44.csv`.
+- UI language changed from “cancel” to “disable” while the database still stores the internal status `cancelled` for compatibility.
+
+Existing coupons created before this update will show `Link unavailable` because the raw claim token was intentionally never stored. New coupons created after this update will have copyable links in the Coupon list and on the detail page.
+
+For an existing Supabase project, run this migration before redeploying the updated Edge Functions:
+
+```sql
+-- supabase/migrations/202605180001_add_coupon_claim_path.sql
+alter table public.coupons
+  add column if not exists claim_path text unique;
+
+create index if not exists coupons_claim_path_idx on public.coupons(claim_path);
+```
+

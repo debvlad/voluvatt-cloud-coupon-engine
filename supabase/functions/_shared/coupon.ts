@@ -18,7 +18,7 @@ export function statusMessage(status: string) {
     case 'valid': return 'This cloud reward is valid.';
     case 'redeemed': return 'This cloud reward was already redeemed.';
     case 'expired': return 'This cloud reward has expired.';
-    case 'cancelled': return 'This cloud reward was cancelled.';
+    case 'cancelled': return 'This cloud reward was disabled.';
     default: return 'This cloud reward is invalid.';
   }
 }
@@ -80,12 +80,14 @@ export async function createCouponRecord(params: {
     const token = generateToken();
     const tokenHash = await hashToken(token);
     const shortCode = generateShortCode();
+    const claimPath = `/c/${encodeURIComponent(token)}`;
 
     const { data, error } = await service
       .from('coupons')
       .insert({
         token_hash: tokenHash,
         short_code: shortCode,
+        claim_path: claimPath,
         reward_type_id: params.rewardTypeId,
         issued_reason: params.issuedReason || null,
         customer_label: params.customerLabel || null,
@@ -94,14 +96,16 @@ export async function createCouponRecord(params: {
         expires_at: expiresAt,
         created_by: params.createdBy
       })
-      .select('id, short_code, expires_at')
+      .select('id, short_code, claim_path, expires_at')
       .single();
 
     if (!error && data) {
-      const publicUrl = `${publicAppUrl}/c/${encodeURIComponent(token)}`;
+      const publicUrl = `${publicAppUrl}${data.claim_path || claimPath}`;
       return {
+        id: data.id,
         token,
         publicUrl,
+        claimPath: data.claim_path || claimPath,
         qrData: publicUrl,
         shortCode: data.short_code,
         rewardName: reward.name,

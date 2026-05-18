@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
 import { Card, SectionTitle } from '../components/Card';
 import { supabase } from '../lib/supabase';
-import { formatDateTime } from '../lib/api';
+import { displayCouponStatus, formatDateTime } from '../lib/api';
 import type { Coupon } from '../types';
 
 function todayRange() {
@@ -14,13 +14,13 @@ function todayRange() {
 }
 
 function downloadCsv(filename: string, rows: Coupon[]) {
-  const headers = ['short_code','reward','status','issued_reason','customer_label','expires_at','created_at','redeemed_at','redeemed_event','cancelled_at'];
+  const headers = ['short_code','reward','status','issued_reason','customer_label','expires_at','created_at','redeemed_at','redeemed_event','disabled_at'];
   const lines = [headers.join(',')];
   for (const c of rows) {
     const values = [
       c.short_code,
       c.reward_types?.name || '',
-      c.status,
+      displayCouponStatus(c.status),
       c.issued_reason || '',
       c.customer_label || '',
       c.expires_at,

@@ -68,3 +68,8 @@ export function formatDate(value: string | null | undefined) {
     year: 'numeric', month: 'short', day: 'numeric'
   }).format(new Date(value));
 }
+
+export function displayCouponStatus(status: string | null | undefined) {
+  if (!status) return 'unknown';
+  return status === 'cancelled' ? 'disabled' : status;
+}

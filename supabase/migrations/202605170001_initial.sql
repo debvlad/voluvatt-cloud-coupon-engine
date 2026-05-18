@@ -24,6 +24,7 @@ create table if not exists public.coupons (
   id uuid primary key default gen_random_uuid(),
   token_hash text unique not null,
   short_code text unique not null,
+  claim_path text unique,
   reward_type_id uuid not null references public.reward_types(id),
   status text not null check (status in ('issued','redeemed','expired','cancelled')) default 'issued',
   issued_reason text,
@@ -59,6 +60,7 @@ create table if not exists public.coupon_scan_logs (
 
 create index if not exists coupons_token_hash_idx on public.coupons(token_hash);
 create index if not exists coupons_short_code_idx on public.coupons(short_code);
+create index if not exists coupons_claim_path_idx on public.coupons(claim_path);
 create index if not exists coupons_status_idx on public.coupons(status);
 create index if not exists coupons_expires_at_idx on public.coupons(expires_at);
 create index if not exists coupons_created_at_idx on public.coupons(created_at desc);
@@ -193,7 +195,7 @@ begin
     return query select
       'cancelled'::text, v_coupon.id, 'cancelled'::text, v_reward_name, v_coupon.expires_at,
       v_coupon.redeemed_at, v_coupon.cancelled_at, v_coupon.short_code, v_coupon.customer_label,
-      v_coupon.issued_reason, 'Coupon was cancelled.'::text;
+      v_coupon.issued_reason, 'Coupon was disabled.'::text;
     return;
   end if;
 

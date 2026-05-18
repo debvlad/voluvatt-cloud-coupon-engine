@@ -18,7 +18,7 @@ function panel(status: ValidatedCoupon['status'] | 'empty' | 'success') {
     case 'valid': return { label: 'VALID', className: 'bg-green-600 text-white', icon: <CheckCircle2 size={56} /> };
     case 'redeemed': return { label: 'ALREADY REDEEMED', className: 'bg-red-600 text-white', icon: <XCircle size={56} /> };
     case 'expired': return { label: 'EXPIRED', className: 'bg-gray-600 text-white', icon: <CircleStop size={56} /> };
-    case 'cancelled': return { label: 'CANCELLED', className: 'bg-red-950 text-white', icon: <XCircle size={56} /> };
+    case 'cancelled': return { label: 'DISABLED', className: 'bg-red-950 text-white', icon: <XCircle size={56} /> };
     case 'invalid': return { label: 'INVALID', className: 'bg-red-950 text-white', icon: <XCircle size={56} /> };
     default: return { label: 'READY TO SCAN', className: 'bg-navy text-white', icon: <ScanLine size={56} /> };
   }
@@ -170,7 +170,7 @@ export function ScanPage() {
             <h2 className="text-3xl font-black text-navy">{coupon.rewardName || 'Cloud Reward'}</h2>
             <p className="text-navy/65">Expires: <strong>{formatDateTime(coupon.expiresAt)}</strong></p>
             {coupon.redeemedAt && <p className="text-red-700">Redeemed: <strong>{formatDateTime(coupon.redeemedAt)}</strong></p>}
-            {coupon.cancelledAt && <p className="text-red-950">Cancelled: <strong>{formatDateTime(coupon.cancelledAt)}</strong></p>}
+            {coupon.cancelledAt && <p className="text-red-950">Disabled: <strong>{formatDateTime(coupon.cancelledAt)}</strong></p>}
             {coupon.customerLabel && <p className="text-sm text-navy/60">Label: {coupon.customerLabel}</p>}
             {coupon.shortCode && <p className="text-xs text-navy/45">Backup code: {coupon.shortCode}</p>}
           </div>

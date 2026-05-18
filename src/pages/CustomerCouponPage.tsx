@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Gift, Wand2 } from 'lucide-react';
-import { callFunction, formatDate } from '../lib/api';
+import { callFunction, displayCouponStatus, formatDate } from '../lib/api';
 import { makeQrDataUrl } from '../lib/qr';
 import type { ValidatedCoupon } from '../types';
 
@@ -56,7 +56,7 @@ export function CustomerCouponPage() {
         {coupon && (
           <div className="mt-6 space-y-5">
             <div className={`rounded-3xl border p-4 ${statusClass(coupon.status)}`}>
-              <p className="text-sm font-black uppercase tracking-[0.18em]">{coupon.status}</p>
+              <p className="text-sm font-black uppercase tracking-[0.18em]">{displayCouponStatus(coupon.status)}</p>
               <p className="mt-1 text-lg font-bold">{coupon.message}</p>
             </div>
 

@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Copy, Download, Plus, Trash2, UserPlus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Copy, Download, FileDown, Plus, Trash2, UserPlus } from 'lucide-react';
 import { Card, SectionTitle } from '../components/Card';
-import { callFunction, formatDateTime } from '../lib/api';
+import { callFunction, displayCouponStatus, formatDateTime } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import { supabase } from '../lib/supabase';
 import { downloadDataUrl, makeQrDataUrl } from '../lib/qr';
@@ -16,6 +17,8 @@ const reasons = [
   'Manual'
 ];
 
+const pageSizeOptions = [10, 20, 50, 100];
+
 type CreatedWithQr = CreatedCoupon & { qrImage: string };
 
 function defaultExpiry(days = 30) {
@@ -29,10 +32,82 @@ function toIsoFromInput(value: string) {
   return new Date(value).toISOString();
 }
 
+function isDisableable(coupon: Coupon) {
+  return coupon.status === 'issued' && new Date(coupon.expires_at) > new Date();
+}
+
+function publicUrlForCoupon(coupon: Coupon) {
+  if (!coupon.claim_path) return '';
+  if (coupon.claim_path.startsWith('http://') || coupon.claim_path.startsWith('https://')) return coupon.claim_path;
+  return `${window.location.origin}${coupon.claim_path.startsWith('/') ? '' : '/'}${coupon.claim_path}`;
+}
+
+function effectiveStatus(coupon: Coupon) {
+  if (coupon.status === 'issued' && new Date(coupon.expires_at) <= new Date()) return 'expired';
+  return coupon.status;
+}
+
+function csvEscape(value: unknown) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function exportTimestamp() {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}.${pad(d.getHours())}.${pad(d.getMinutes())}`;
+}
+
+function downloadCouponCsv(rows: Coupon[]) {
+  const headers = [
+    'Code',
+    'Link',
+    'Reward',
+    'Status',
+    'Reason',
+    'Expires',
+    'Redeemed',
+    'Customer Label',
+    'Customer Contact',
+    'Notes'
+  ];
+  const lines = [headers.map(csvEscape).join(',')];
+
+  for (const coupon of rows) {
+    const link = publicUrlForCoupon(coupon) || 'Link unavailable';
+    const row = [
+      coupon.short_code,
+      link,
+      coupon.reward_types?.name || coupon.reward_type_id,
+      displayCouponStatus(effectiveStatus(coupon)),
+      coupon.issued_reason || '',
+      coupon.expires_at,
+      coupon.redeemed_at || '',
+      coupon.customer_label || '',
+      coupon.customer_contact || '',
+      coupon.notes || ''
+    ];
+    lines.push(row.map(csvEscape).join(','));
+  }
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `voluvatt-coupons-export.${exportTimestamp()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function AdminPage() {
   const { session, profile } = useAuth();
   const [rewardTypes, setRewardTypes] = useState<RewardType[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [couponTotal, setCouponTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+  const [selectedCouponIds, setSelectedCouponIds] = useState<string[]>([]);
   const [staff, setStaff] = useState<Profile[]>([]);
   const [rewardTypeId, setRewardTypeId] = useState('');
   const [expiresAt, setExpiresAt] = useState(defaultExpiry());
@@ -49,20 +124,35 @@ export function AdminPage() {
   const [staffName, setStaffName] = useState('');
 
   const selectedReward = useMemo(() => rewardTypes.find((r) => r.id === rewardTypeId), [rewardTypes, rewardTypeId]);
+  const totalPages = Math.max(1, Math.ceil(couponTotal / pageSize));
+  const selectedCoupons = useMemo(() => coupons.filter((c) => selectedCouponIds.includes(c.id)), [coupons, selectedCouponIds]);
+  const visibleIds = coupons.map((c) => c.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedCouponIds.includes(id));
+  const firstVisible = couponTotal === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastVisible = Math.min(page * pageSize, couponTotal);
 
   useEffect(() => {
-    loadAll();
+    loadReferenceData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    loadCoupons(page, pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize]);
+
+  useEffect(() => {
+    setSelectedCouponIds([]);
+  }, [page, pageSize]);
 
   useEffect(() => {
     if (selectedReward) setExpiresAt(defaultExpiry(selectedReward.default_expiry_days));
   }, [selectedReward?.id]);
 
-  async function loadAll() {
+  async function loadReferenceData() {
     setError('');
-    const [rewardsResult, couponsResult, staffResult] = await Promise.all([
+    const [rewardsResult, staffResult] = await Promise.all([
       supabase.from('reward_types').select('*').eq('active', true).order('name'),
-      supabase.from('coupons').select('*, reward_types(name)').order('created_at', { ascending: false }).limit(200),
       supabase.from('profiles').select('id, display_name, role, active, created_at').order('created_at', { ascending: false })
     ]);
 
@@ -73,11 +163,30 @@ export function AdminPage() {
       if (!rewardTypeId && rewards[0]) setRewardTypeId(rewards[0].id);
     }
 
-    if (couponsResult.error) setError(couponsResult.error.message);
-    else setCoupons(couponsResult.data as Coupon[]);
-
     if (staffResult.error) setError(staffResult.error.message);
     else setStaff(staffResult.data as Profile[]);
+  }
+
+  async function loadCoupons(nextPage = page, nextPageSize = pageSize) {
+    setError('');
+    const from = (nextPage - 1) * nextPageSize;
+    const to = from + nextPageSize - 1;
+    const { data, error, count } = await supabase
+      .from('coupons')
+      .select('*, reward_types(name)', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (error) setError(error.message);
+    else {
+      setCoupons(data as Coupon[]);
+      setCouponTotal(count ?? 0);
+    }
+  }
+
+  async function refreshCouponsToFirstPage() {
+    setPage(1);
+    await loadCoupons(1, pageSize);
   }
 
   async function decorateCreated(items: CreatedCoupon[]) {
@@ -102,7 +211,7 @@ export function AdminPage() {
         notes: notes || null
       }, session);
       await decorateCreated([result]);
-      await loadAll();
+      await refreshCouponsToFirstPage();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Create coupon failed.');
     } finally {
@@ -124,7 +233,7 @@ export function AdminPage() {
         notes: notes || null
       }, session);
       await decorateCreated(result.coupons);
-      await loadAll();
+      await refreshCouponsToFirstPage();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Batch create failed.');
     } finally {
@@ -132,18 +241,50 @@ export function AdminPage() {
     }
   }
 
-  async function cancelCoupon(couponId: string) {
-    if (!window.confirm('Cancel this unused coupon?')) return;
+  async function disableCoupon(couponId: string) {
+    if (!window.confirm('Disable this unused coupon? This cannot be undone.')) return;
     setBusy(true);
     setError('');
     try {
       await callFunction('cancel-coupon', { couponId }, session);
-      await loadAll();
+      await loadCoupons();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Cancel failed.');
+      setError(e instanceof Error ? e.message.replace(/cancelled|cancel/gi, 'disabled') : 'Disable failed.');
     } finally {
       setBusy(false);
     }
+  }
+
+  async function disableSelectedCoupons() {
+    const disableable = selectedCoupons.filter(isDisableable);
+    if (disableable.length === 0) {
+      window.alert('Select at least one unused issued coupon to disable. Redeemed, expired, and already disabled coupons cannot be disabled again.');
+      return;
+    }
+
+    if (!window.confirm(`Disable ${disableable.length} selected coupon${disableable.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      for (const coupon of disableable) {
+        await callFunction('cancel-coupon', { couponId: coupon.id }, session);
+      }
+      setSelectedCouponIds([]);
+      await loadCoupons();
+    } catch (e) {
+      setError(e instanceof Error ? e.message.replace(/cancelled|cancel/gi, 'disabled') : 'Bulk disable failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exportSelectedCoupons() {
+    if (selectedCoupons.length === 0) {
+      window.alert('Select at least one coupon to export.');
+      return;
+    }
+    downloadCouponCsv(selectedCoupons);
   }
 
   async function createStaff(e: FormEvent) {
@@ -159,7 +300,7 @@ export function AdminPage() {
       setStaffEmail('');
       setStaffPassword('');
       setStaffName('');
-      await loadAll();
+      await loadReferenceData();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Create staff failed.');
     } finally {
@@ -173,7 +314,7 @@ export function AdminPage() {
     setError('');
     try {
       await callFunction('deactivate-staff-user', { staffUserId }, session);
-      await loadAll();
+      await loadReferenceData();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Deactivate failed.');
     } finally {
@@ -181,8 +322,30 @@ export function AdminPage() {
     }
   }
 
-  function copy(text: string) {
-    navigator.clipboard.writeText(text);
+  async function copy(text: string) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      setError('Copy failed. You can open the coupon detail page and copy the link manually.');
+    }
+  }
+
+  function toggleCoupon(id: string, checked: boolean) {
+    setSelectedCouponIds((current) => checked ? [...new Set([...current, id])] : current.filter((x) => x !== id));
+  }
+
+  function toggleVisibleCoupons(checked: boolean) {
+    setSelectedCouponIds(checked ? visibleIds : []);
+  }
+
+  function changePageSize(value: number) {
+    setPageSize(value);
+    setPage(1);
+  }
+
+  function pageButtons() {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
 
   return (
@@ -265,13 +428,31 @@ export function AdminPage() {
       </div>
 
       <Card>
-        <SectionTitle title="Coupon list" subtitle="Newest 200 coupons. Cancel only works for unused issued coupons." />
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-black text-navy">Coupon list</h2>
+            <p className="mt-1 text-sm text-navy/60">Latest coupons. Select coupons to export or disable unused issued coupons.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={exportSelectedCoupons} disabled={selectedCoupons.length === 0} className="focus-ring rounded-2xl bg-cloudCream px-4 py-2 font-black text-navy disabled:opacity-40">
+              <FileDown size={16} className="inline" /> Export
+            </button>
+            <button type="button" onClick={disableSelectedCoupons} disabled={busy || selectedCoupons.length === 0} className="focus-ring rounded-2xl bg-red-50 px-4 py-2 font-black text-red-700 disabled:opacity-40">
+              <Trash2 size={16} className="inline" /> Disable
+            </button>
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
+          <table className="min-w-[1100px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wide text-navy/45">
               <tr>
+                <th className="px-3 py-2">
+                  <input aria-label="Select all coupons on this page" type="checkbox" checked={allVisibleSelected} onChange={(e) => toggleVisibleCoupons(e.target.checked)} className="h-4 w-4 rounded border-navy/30" />
+                </th>
                 <th className="px-3 py-2">Code</th>
                 <th className="px-3 py-2">Reward</th>
+                <th className="px-3 py-2">Link</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Reason</th>
                 <th className="px-3 py-2">Expires</th>
@@ -281,25 +462,61 @@ export function AdminPage() {
             </thead>
             <tbody>
               {coupons.map((c) => {
-                const effectiveStatus = c.status === 'issued' && new Date(c.expires_at) <= new Date() ? 'expired' : c.status;
+                const status = effectiveStatus(c);
+                const publicUrl = publicUrlForCoupon(c);
                 return (
                   <tr key={c.id} className="border-t border-navy/5">
-                    <td className="px-3 py-3 font-bold text-navy">{c.short_code}</td>
-                    <td className="px-3 py-3">{c.reward_types?.name || c.reward_type_id}</td>
-                    <td className="px-3 py-3"><span className="rounded-full bg-cloudCream px-3 py-1 font-bold">{effectiveStatus}</span></td>
-                    <td className="px-3 py-3">{c.issued_reason || '—'}</td>
-                    <td className="px-3 py-3 whitespace-nowrap">{formatDateTime(c.expires_at)}</td>
-                    <td className="px-3 py-3 whitespace-nowrap">{formatDateTime(c.redeemed_at)}</td>
                     <td className="px-3 py-3">
-                      {c.status === 'issued' && new Date(c.expires_at) > new Date() && (
-                        <button disabled={busy} onClick={() => cancelCoupon(c.id)} className="rounded-xl bg-red-50 px-3 py-2 font-bold text-red-700 disabled:opacity-60"><Trash2 size={15} className="inline" /> Cancel</button>
+                      <input aria-label={`Select coupon ${c.short_code}`} type="checkbox" checked={selectedCouponIds.includes(c.id)} onChange={(e) => toggleCoupon(c.id, e.target.checked)} className="h-4 w-4 rounded border-navy/30" />
+                    </td>
+                    <td className="px-3 py-3 font-bold text-navy">
+                      <Link className="underline decoration-navy/20 underline-offset-4 hover:decoration-navy" to={`/admin/coupons/${c.id}`}>{c.short_code}</Link>
+                    </td>
+                    <td className="px-3 py-3">{c.reward_types?.name || c.reward_type_id}</td>
+                    <td className="px-3 py-3">
+                      {publicUrl ? (
+                        <button type="button" title="Copy coupon link" onClick={() => copy(publicUrl)} className="focus-ring grid h-8 w-8 place-items-center rounded-xl bg-cloudCream text-navy hover:bg-cloudBlue/30">
+                          <Copy size={15} />
+                        </button>
+                      ) : (
+                        <span className="text-xs font-semibold text-navy/35">Unavailable</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3"><span className="rounded-full bg-cloudCream px-3 py-1 font-bold capitalize">{displayCouponStatus(status)}</span></td>
+                    <td className="px-3 py-3">{c.issued_reason || '—'}</td>
+                    <td className="whitespace-nowrap px-3 py-3">{formatDateTime(c.expires_at)}</td>
+                    <td className="whitespace-nowrap px-3 py-3">{formatDateTime(c.redeemed_at)}</td>
+                    <td className="px-3 py-3">
+                      {isDisableable(c) && (
+                        <button disabled={busy} onClick={() => disableCoupon(c.id)} className="rounded-xl bg-red-50 px-3 py-2 font-bold text-red-700 disabled:opacity-60"><Trash2 size={15} className="inline" /> Disable</button>
                       )}
                     </td>
                   </tr>
                 );
               })}
+              {coupons.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-navy/55">No coupons found.</td></tr>}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-navy/65">
+          <div className="flex items-center gap-2">
+            <span>Show</span>
+            <select className="focus-ring rounded-xl border border-navy/10 bg-cloudCream px-3 py-2 font-bold text-navy" value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
+              {pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+            <span>coupons</span>
+          </div>
+
+          <p>Showing {firstVisible}–{lastVisible} of {couponTotal}</p>
+
+          <div className="flex flex-wrap items-center gap-1">
+            <button type="button" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))} className="focus-ring rounded-xl bg-cloudCream px-3 py-2 font-black text-navy disabled:opacity-35">←</button>
+            {pageButtons().map((number) => (
+              <button key={number} type="button" onClick={() => setPage(number)} className={`focus-ring rounded-xl px-3 py-2 font-black ${number === page ? 'bg-navy text-white' : 'bg-cloudCream text-navy'}`}>{number}</button>
+            ))}
+            <button type="button" disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="focus-ring rounded-xl bg-cloudCream px-3 py-2 font-black text-navy disabled:opacity-35">→</button>
+          </div>
         </div>
       </Card>
 
